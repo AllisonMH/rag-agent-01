@@ -9,6 +9,7 @@ sys.path.append(str(Path(__file__).parent))
 
 from agent.agent import RAGAgent
 from models.response import RAGResponse
+from observability.tracing import trace_request
 
 app = FastAPI(
     title="RAG Agent API",
@@ -49,6 +50,7 @@ class QueryRequest(BaseModel):
 
 
 @app.post("/query", response_model=RAGResponse)
+@trace_request("query_endpoint")
 async def query_agent(request: QueryRequest) -> RAGResponse:
     """
     Query the RAG agent with a question.

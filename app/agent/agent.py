@@ -3,6 +3,7 @@ from typing import List, Optional
 from openai import OpenAI
 import sys
 from pathlib import Path
+from observability.tracing import trace_function, trace_llm_call, trace_retrieval, TracingContext
 
 # Add parent directory to path to import retriever
 sys.path.append(str(Path(__file__).parent.parent))
@@ -116,6 +117,7 @@ Please provide a comprehensive answer based on the context above."""
         print()  # New line after streaming
         return full_response
     
+    @trace_function("rag_agent.query")
     def query(
         self, 
         question: str, 
@@ -123,22 +125,14 @@ Please provide a comprehensive answer based on the context above."""
         stream: bool = False,
         return_context: bool = False
     ) -> dict:
-        """
-        Main query method that combines retrieval + LLM.
-        
-        Args:
-            question: User's question
-            top_k: Number of chunks to retrieve (overrides default)
-            stream: Whether to stream the response
-            return_context: Whether to return retrieved context
-        
-        Returns:
-            Dictionary with response and optionally context
-        """
-        # Step 1: Retrieve context
+        """Main query method that combines retrieval + LLM."""
         k = top_k or self.top_k
-        print(f"Retrieving top {k} relevant chunks...")
-        context_chunks = self.retriever.retrieve(question, top_k=k)
+        
+        # Step 1: Retrieve context with tracing
+        with TracingContext("retrieval", query_length=len(question), top_k=k):
+            print(f"Retrieving top {k} relevant chunks...")
+            context_chunks = self.retriever.retrieve(question, top_k=k)
+            trace_retrieval(question, k, len(context_chunks))
         
         if not context_chunks:
             return {
@@ -146,9 +140,11 @@ Please provide a comprehensive answer based on the context above."""
                 "context": [] if return_context else None
             }
         
-        # Step 2-3: Insert into prompt template and call OpenAI API
-        print(f"Generating response using {self.model}...\n")
-        response = self.generate_response(question, context_chunks, stream=stream)
+        # Step 2-3: Generate response with tracing
+        with TracingContext("llm_generation", model=self.model):
+            print(f"Generating response using {self.model}...\n")
+            response = self.generate_response(question, context_chunks, stream=stream)
+            trace_llm_call(self.model)
         
         # Step 4: Return response
         result = {"response": response}
